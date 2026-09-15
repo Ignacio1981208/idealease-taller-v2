@@ -1,0 +1,8 @@
+{
+  "name": "ideal-taller-seguimiento",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@netlify/database": "^1.0.0"
+  }
+}

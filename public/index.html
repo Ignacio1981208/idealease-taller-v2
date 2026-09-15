@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IDEALEASE · Seguimiento de Unidades en Taller</title>
+<style>
+  html,body{margin:0;padding:0;background:#fff;font-family:system-ui,-apple-system,sans-serif;color:#001B47;}
+  *{box-sizing:border-box;}
+  button{font-family:inherit;}
+  input,textarea,select{font-family:inherit;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+import React from "https://esm.sh/react@18.3.1";
+import ReactDOM from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+import * as XLSX from "https://esm.sh/xlsx@0.18.5";
+
+const html = htm.bind(React.createElement);
+const { useState, useEffect, useMemo } = React;
+
+const BLUE = "#002D72", BLUE_DARK = "#001B47", BLUE_SOFT = "#274B8E", WHITE = "#FFFFFF";
+const AMBER = "#C88A00", RED = "#B3261E", GREEN = "#1E7A46", GRAY = "#6B7280", BORDER = "#D9DEE8", BG = "#F4F6FB";
+const CELESTE = "#2FAFE0", NARANJA = "#D9722C";
+
+const COLOR_TIPO_OPCIONES = [
+  { id: "verde", label: "Ingreso Normal", color: GREEN },
+  { id: "amarillo", label: "Término Renta Sin Def", color: AMBER },
+  { id: "naranja", label: "Término Renta con Def", color: NARANJA },
+];
+function colorTipoAColor(id) { return (COLOR_TIPO_OPCIONES.find((o) => o.id === id) || {}).color || BLUE_SOFT; }
+
+const ETAPAS = [
+  { id: 1, nombre: "Ingreso Vigilante", rol: "Vigilante", metaHrs: 0.5 },
+  { id: 2, nombre: "Recepción Servicio", rol: "Asesor de Servicio", metaHrs: 1 },
+  { id: 3, nombre: "Pendiente Asignar", rol: "Supervisor Mantenimiento", metaHrs: 1 },
+  { id: 4, nombre: "Diagnóstico/Revisión", rol: "Técnico", metaHrs: 4 },
+  { id: 5, nombre: "Surtimiento Refacción", rol: "Almacenista", metaHrs: 8 },
+  { id: 6, nombre: "Reparación", rol: "Técnico", metaHrs: 8 },
+  { id: 7, nombre: "Validación Taller", rol: "Supervisor Mantenimiento", metaHrs: 1 },
+  { id: 8, nombre: "Validación Servicio (Disponible)", rol: "Asesor de Servicio", metaHrs: 1 },
+];
+const META_TOTAL_HRS = ETAPAS.reduce((a, e) => a + e.metaHrs, 0);
+const ROLES = [...new Set(ETAPAS.map((e) => e.rol))];
+
+function hoursBetween(a, b) { return (new Date(b) - new Date(a)) / 36e5; }
+function fmtDiasHorasMin(totalHoras) {
+  const totalMin = Math.max(0, Math.round(totalHoras * 60));
+  const dias = Math.floor(totalMin / 1440);
+  const horas = Math.floor((totalMin % 1440) / 60);
+  const min = totalMin % 60;
+  const partes = [];
+  if (dias > 0) partes.push(`${dias} d`);
+  if (horas > 0) partes.push(`${horas} h`);
+  if (dias === 0) partes.push(`${min} min`);
+  return partes.join(" ");
+}
+function fmtFechaHora(iso) {
+  if (!iso) return "-";
+  return new Date(iso).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function ultimaEntradaAbierta(historial) { return (historial || []).find((h) => h.fin == null); }
+function calcEstatus(unidad) {
+  const entrada = ultimaEntradaAbierta(unidad.historial);
+  if (!entrada) return { label: "Disponible", color: GREEN, horasEnEtapa: 0 };
+  const etapa = ETAPAS[entrada.etapa - 1];
+  const horasEnEtapa = hoursBetween(entrada.inicio, new Date().toISOString());
+  const ratio = horasEnEtapa / etapa.metaHrs;
+  if (ratio <= 1) return { label: "En tiempo", color: GREEN, horasEnEtapa, ratio };
+  if (ratio <= 1.5) return { label: "Alerta", color: AMBER, horasEnEtapa, ratio };
+  return { label: "Crítico", color: RED, horasEnEtapa, ratio };
+}
+function calcTotalHoras(u) { return hoursBetween(u.fechaIngreso, u.fechaSalida || new Date().toISOString()); }
+function comentariosCompletos(historial) {
+  return (historial || [])
+    .filter((h) => h.comentario)
+    .map((h) => `${ETAPAS[h.etapa - 1]?.nombre || h.etapa}: ${h.comentario}`)
+    .join("\n");
+}
+
+function getToken() { return localStorage.getItem("taller_token"); }
+function getRole() { return localStorage.getItem("taller_role"); }
+async function api(path, opts = {}) {
+  const headers = { "content-type": "application/json", ...(opts.headers || {}) };
+  const token = getToken();
+  if (token) headers["authorization"] = `Bearer ${token}`;
+  const res = await fetch(path, { ...opts, headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Error de red");
+  return data;
+}
+
+function App() {
+  const [role, setRole] = useState(getRole());
+  const [units, setUnits] = useState([]);
+  const [historico, setHistorico] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [vista, setVista] = useState("panel");
+  const [busqueda, setBusqueda] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [tick, setTick] = useState(0);
+
+  async function cargar() {
+    try {
+      const [u, h] = await Promise.all([api("/api/units?archived=false"), api("/api/units?archived=true")]);
+      setUnits(u); setHistorico(h); setError(null);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { cargar(); const t = setInterval(cargar, 20000); const t2 = setInterval(() => setTick((x) => x + 1), 60000); return () => { clearInterval(t); clearInterval(t2); }; }, []);
+
+  function cerrarSesion() {
+    localStorage.removeItem("taller_token"); localStorage.removeItem("taller_role"); setRole(null);
+  }
+
+  async function crearUnidad(datos) {
+    try { await api("/api/units", { method: "POST", body: JSON.stringify(datos) }); setShowForm(false); cargar(); }
+    catch (e) { setError(e.message); }
+  }
+  async function transicionar(id, body) {
+    try { await api(`/api/units/${id}/transition`, { method: "POST", body: JSON.stringify(body) }); cargar(); }
+    catch (e) { setError(e.message); }
+  }
+  async function archivar(id, body) {
+    try { await api(`/api/units/${id}/archive`, { method: "POST", body: JSON.stringify(body) }); cargar(); }
+    catch (e) { setError(e.message); }
+  }
+  async function eliminar(id) {
+    try { await api(`/api/units/${id}`, { method: "DELETE" }); cargar(); }
+    catch (e) { setError(e.message); }
+  }
+  async function descargarExcel() {
+    const filas = await api("/api/export");
+    const ws = XLSX.utils.json_to_sheet(filas);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Tiempos por etapa");
+    XLSX.writeFile(wb, `tiempos_mantenimiento_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  if (!role) return html`<${Login} onEntrar=${(r) => setRole(r)} />`;
+  if (loading) return html`<div style=${{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}><p style=${{ color: BLUE }}>Cargando…</p></div>`;
+
+  const resumen = ETAPAS.map((et) => units.filter((u) => u.etapaActual === et.id).length);
+  const q = busqueda.trim().toLowerCase();
+  const filtradas = !q ? units : units.filter((u) => (u.vin || "").toLowerCase().includes(q) || (u.ot || "").toLowerCase().includes(q));
+
+  return html`
+    <div style=${{ minHeight: "100vh" }}>
+      <div style=${{ background: BLUE, padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style=${{ color: WHITE, fontSize: 20, fontWeight: 700 }}>IDEALEASE · Seguimiento de Unidades en Taller</div>
+          <div style=${{ color: "#C9D6EE", fontSize: 12.5, marginTop: 2 }}>Ingreso → Recepción → Asignación → Diagnóstico → Surtimiento → Reparación → Validación Taller → Validación Servicio</div>
+        </div>
+        <div style=${{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick=${cerrarSesion} style=${{ background: "rgba(255,255,255,0.12)", color: WHITE, border: "1px solid rgba(255,255,255,0.35)", borderRadius: 999, padding: "8px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Rol: ${role} · Salir</button>
+          <button onClick=${descargarExcel} style=${{ background: "rgba(255,255,255,0.12)", color: WHITE, border: "1px solid rgba(255,255,255,0.35)", borderRadius: 6, padding: "10px 14px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>⬇ Excel</button>
+          ${role === "Vigilante" && html`<button onClick=${() => setShowForm(true)} style=${{ background: WHITE, color: BLUE, border: "none", borderRadius: 6, padding: "10px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>+ Ingresar unidad</button>`}
+        </div>
+      </div>
+
+      <div style=${{ display: "flex", gap: 4, padding: "12px 24px 0" }}>
+        ${[["panel", `Panel (${units.length})`], ["historico", `Histórico (${historico.length})`]].map(([k, label]) => html`
+          <button key=${k} onClick=${() => setVista(k)} style=${{ border: "none", borderBottom: vista === k ? `3px solid ${BLUE}` : "3px solid transparent", background: "transparent", color: vista === k ? BLUE : GRAY, fontWeight: 700, fontSize: 13.5, padding: "8px 10px", cursor: "pointer" }}>${label}</button>
+        `)}
+      </div>
+
+      ${error && html`<div style=${{ background: "#FDECEC", color: RED, padding: "8px 24px", fontSize: 13 }}>${error}</div>`}
+
+      ${vista === "panel" ? html`
+        <div style=${{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(64px,1fr))", gap: 5, padding: "12px 24px" }}>
+          ${ETAPAS.map((et, i) => html`<${ResumenCard} key=${et.id} label=${et.nombre} valor=${resumen[i]} />`)}
+        </div>
+
+        <div style=${{ padding: "0 24px 12px", display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", fontSize: 11.5, color: GRAY }}>
+          <span style=${{ fontWeight: 700, color: BLUE_DARK }}>Color del camión:</span>
+          ${COLOR_TIPO_OPCIONES.map((op) => html`
+            <span key=${op.id} style=${{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style=${{ width: 10, height: 10, borderRadius: "50%", background: op.color, display: "inline-block" }} />${op.label}
+            </span>
+          `)}
+          <span style=${{ display: "flex", alignItems: "center", gap: 5 }}><span style=${{ width: 10, height: 10, borderRadius: "50%", background: CELESTE, display: "inline-block" }} />TOT</span>
+          <span style=${{ borderLeft: `1px solid ${BORDER}`, height: 14 }} />
+          <span style=${{ fontWeight: 700, color: BLUE_DARK }}>Etiqueta de tiempo:</span>
+          <span style=${{ display: "flex", alignItems: "center", gap: 5 }}><span style=${{ width: 10, height: 10, borderRadius: "50%", background: GREEN, display: "inline-block" }} />En tiempo</span>
+          <span style=${{ display: "flex", alignItems: "center", gap: 5 }}><span style=${{ width: 10, height: 10, borderRadius: "50%", background: AMBER, display: "inline-block" }} />Alerta</span>
+          <span style=${{ display: "flex", alignItems: "center", gap: 5 }}><span style=${{ width: 10, height: 10, borderRadius: "50%", background: RED, display: "inline-block" }} />Crítico</span>
+        </div>
+
+        <div style=${{ padding: "0 24px 12px", display: "flex", justifyContent: "flex-end" }}>
+          <input placeholder="Buscar por VIN u OT…" value=${busqueda} onChange=${(e) => setBusqueda(e.target.value)} style=${{ border: `1px solid ${BORDER}`, borderRadius: 6, padding: "8px 12px", fontSize: 13, width: "100%", maxWidth: 280, boxSizing: "border-box" }} />
+        </div>
+
+        <div style=${{ padding: "0 24px 32px", display: "flex", flexDirection: "column", gap: 14 }}>
+          ${filtradas.length === 0 && html`<div style=${{ border: `1px dashed ${BORDER}`, borderRadius: 10, padding: 28, textAlign: "center", color: GRAY, fontSize: 14 }}>No hay unidades que coincidan.</div>`}
+          ${filtradas.map((u) => html`<${UnidadCard} key=${u.id} unidad=${u} rol=${role} onTransicion=${(b) => transicionar(u.id, b)} onArchivar=${(b) => archivar(u.id, b)} onEliminar=${() => eliminar(u.id)} />`)}
+        </div>
+      ` : html`
+        <div style=${{ padding: "16px 24px 32px" }}>
+          ${historico.length === 0 ? html`<div style=${{ border: `1px dashed ${BORDER}`, borderRadius: 10, padding: 28, textAlign: "center", color: GRAY, fontSize: 14 }}>Aún no hay unidades en histórico.</div>` : html`
+            <div style=${{ display: "flex", flexDirection: "column", gap: 8 }}>
+              ${historico.map((u) => {
+                const total = calcTotalHoras(u); const cumplio = total <= META_TOTAL_HRS;
+                return html`
+                  <div key=${u.id} style=${{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
+                    <div style=${{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                      <div><b>${u.vin}</b> · ${u.cliente} ${u.placa ? `· Placa ${u.placa}` : ""} ${u.ot ? `· OT ${u.ot}` : ""}</div>
+                      <div style=${{ color: cumplio ? GREEN : RED, fontWeight: 600 }}>${fmtDiasHorasMin(total)} ${cumplio ? "· Dentro de meta" : "· Fuera de meta"}</div>
+                    </div>
+                    <div style=${{ color: GRAY, fontSize: 11.5, marginTop: 4 }}>Ingreso: ${fmtFechaHora(u.fechaIngreso)} · Disponible: ${fmtFechaHora(u.fechaSalida)}</div>
+                  </div>
+                `;
+              })}
+            </div>
+          `}
+        </div>
+      `}
+
+      ${showForm && html`<${FormularioIngreso} onCancelar=${() => setShowForm(false)} onGuardar=${crearUnidad} />`}
+    </div>
+  `;
+}
+
+function ResumenCard({ label, valor }) {
+  return html`
+    <div style=${{ border: `1px solid ${BORDER}`, borderRadius: 6, padding: "4px 6px", background: WHITE }}>
+      <div style=${{ color: GRAY, fontSize: 7.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.1, lineHeight: 1.15 }}>${label}</div>
+      <div style=${{ color: BLUE, fontSize: 12, fontWeight: 700, marginTop: 1 }}>${valor}</div>
+    </div>
+  `;
+}
+
+function TruckIcon({ color, size = 34 }) {
+  return html`
+    <svg width=${size} height=${size * 0.6} viewBox="0 0 64 40" style=${{ display: "block" }}>
+      <rect x="1" y="14" width="34" height="16" rx="1.5" fill=${color} />
+      <path d="M35 18 H50 L59 26 V30 H35 Z" fill=${color} />
+      <rect x="39" y="21" width="9" height="7" fill=${WHITE} opacity="0.9" />
+      <circle cx="14" cy="32" r="6" fill=${BLUE_DARK} />
+      <circle cx="14" cy="32" r="2.4" fill=${WHITE} />
+      <circle cx="49" cy="32" r="6" fill=${BLUE_DARK} />
+      <circle cx="49" cy="32" r="2.4" fill=${WHITE} />
+    </svg>
+  `;
+}
+
+function CaminoUnidad({ etapaActual, colorEstatus, colorCarrito, tiempoLabel, comentario }) {
+  const n = ETAPAS.length;
+  const posIdx = Math.min(etapaActual, n) - 1;
+  const pct = n === 1 ? 0 : (posIdx / (n - 1)) * 100;
+  return html`
+    <div style=${{ padding: "6px 6px 2px" }}>
+      <div style=${{ position: "relative", height: 68, marginBottom: 6 }}>
+        <div style=${{ position: "absolute", top: 48, left: "4%", right: "4%", height: 4, borderRadius: 2, background: `repeating-linear-gradient(to right, ${BORDER} 0 8px, transparent 8px 14px)` }} />
+        <div style=${{ position: "absolute", top: 48, left: "4%", width: `calc(${pct}% * 0.92)`, height: 4, borderRadius: 2, background: BLUE_SOFT, transition: "width 0.4s ease" }} />
+        <div title=${comentario || "Sin comentarios aún"} style=${{ position: "absolute", top: 0, left: `calc(4% + ${pct}% * 0.92)`, transform: "translateX(-50%)", transition: "left 0.4s ease", display: "flex", flexDirection: "column", alignItems: "center", cursor: "help" }}>
+          ${tiempoLabel && html`<div style=${{ fontSize: 9, fontWeight: 700, color: colorEstatus, background: WHITE, border: `1px solid ${colorEstatus}`, borderRadius: 999, padding: "1px 5px", marginBottom: 1, whiteSpace: "nowrap" }}>${tiempoLabel}</div>`}
+          <${TruckIcon} color=${colorCarrito} size=${52} />
+        </div>
+        ${ETAPAS.map((e, i) => {
+          const p = n === 1 ? 0 : (i / (n - 1)) * 100;
+          const alcanzada = e.id <= Math.min(etapaActual, n);
+          return html`<div key=${e.id} title=${e.nombre} style=${{ position: "absolute", top: 44, left: `calc(4% + ${p}% * 0.92)`, transform: "translateX(-50%)", width: 11, height: 11, borderRadius: "50%", background: alcanzada ? BLUE_SOFT : WHITE, border: `2px solid ${alcanzada ? BLUE_SOFT : BORDER}` }} />`;
+        })}
+      </div>
+      <div style=${{ display: "flex", justifyContent: "space-between", padding: "0 2%" }}>
+        ${ETAPAS.map((e) => html`<div key=${e.id} style=${{ flex: 1, textAlign: "center", fontSize: 9, lineHeight: 1.15, color: e.id === Math.min(etapaActual, n) ? BLUE : GRAY, fontWeight: e.id === Math.min(etapaActual, n) ? 700 : 500 }}>${e.nombre}</div>`)}
+      </div>
+    </div>
+  `;
+}
+
+const inputStyle = { border: `1px solid ${BORDER}`, borderRadius: 6, padding: "8px 10px", fontSize: 13, color: BLUE_DARK, fontFamily: "inherit", width: "100%" };
+const btnPrimary = { background: BLUE, color: WHITE, border: "none", borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+const btnSecondary = { background: WHITE, color: BLUE, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+const btnWarn = { background: WHITE, color: RED, border: `1px solid ${RED}`, borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+function Bloque(props) { return html`<div style=${{ display: "flex", flexDirection: "column", gap: 8, background: BG, borderRadius: 8, padding: 12, marginTop: 10 }}>${props.children}</div>`; }
+
+function UnidadCard({ unidad, rol, onTransicion, onArchivar, onEliminar }) {
+  const estatus = calcEstatus(unidad);
+  const etapaDef = ETAPAS[unidad.etapaActual - 1];
+  const puedeActuar = rol === etapaDef.rol;
+  const tiempoLabel = fmtDiasHorasMin(estatus.horasEnEtapa || 0);
+  const colorCarrito = unidad.tot ? CELESTE : unidad.colorTipo ? colorTipoAColor(unidad.colorTipo) : BLUE_SOFT;
+  const rastroComentarios = comentariosCompletos(unidad.historial);
+
+  return html`
+    <div style=${{ border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style=${{ background: BLUE, padding: "9px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div style=${{ color: WHITE, fontWeight: 700, fontSize: 14 }}>
+          ${unidad.vin}
+          <span style=${{ color: "#C9D6EE", fontWeight: 400, fontSize: 12 }}>
+            ${" "}· ${unidad.cliente} ${unidad.placa ? `· Placa ${unidad.placa}` : ""} ${unidad.ot ? `· OT ${unidad.ot}` : ""}
+          </span>
+        </div>
+        <div style=${{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style=${{ background: estatus.color, color: WHITE, borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 700 }}>${estatus.label}</span>
+          <button onClick=${onEliminar} title="Eliminar" style=${{ background: "transparent", border: "none", color: "#C9D6EE", cursor: "pointer", fontSize: 13 }}>✕</button>
+        </div>
+      </div>
+      <div style=${{ padding: "14px 16px" }}>
+        <${CaminoUnidad} etapaActual=${unidad.etapaActual} colorEstatus=${estatus.color} colorCarrito=${colorCarrito} tiempoLabel=${tiempoLabel} comentario=${rastroComentarios} />
+        <${AccionEtapa} unidad=${unidad} etapaDef=${etapaDef} puedeActuar=${puedeActuar} onTransicion=${onTransicion} onArchivar=${onArchivar} />
+      </div>
+    </div>
+  `;
+}
+
+function AccionEtapa({ unidad, etapaDef, puedeActuar, onTransicion, onArchivar }) {
+  if (!puedeActuar) return html`<div style=${{ fontSize: 12, color: GRAY, fontStyle: "italic", marginTop: 10 }}>Solo <b>${etapaDef.rol}</b> puede actualizar esta etapa</div>`;
+  switch (unidad.etapaActual) {
+    case 2: return html`<${EtapaRecepcion} unidad=${unidad} onTransicion=${onTransicion} />`;
+    case 3: return html`<${EtapaAsignar} unidad=${unidad} onTransicion=${onTransicion} />`;
+    case 4: return html`<${EtapaDiagnostico} unidad=${unidad} onTransicion=${onTransicion} />`;
+    case 5: return html`<${EtapaSurtimiento} unidad=${unidad} onTransicion=${onTransicion} />`;
+    case 6: return html`<${EtapaReparacion} unidad=${unidad} onTransicion=${onTransicion} />`;
+    case 7: return html`<${EtapaValidacionTaller} unidad=${unidad} onTransicion=${onTransicion} />`;
+    case 8: return html`<${EtapaValidacionServicio} unidad=${unidad} onArchivar=${onArchivar} onTransicion=${onTransicion} />`;
+    default: return null;
+  }
+}
+
+function EtapaRecepcion({ unidad, onTransicion }) {
+  const [vin, setVin] = useState(unidad.vin || "");
+  const [ot, setOt] = useState(unidad.ot || "");
+  const [motivo, setMotivo] = useState(unidad.motivoIngreso || "");
+  const [colorTipo, setColorTipo] = useState(unidad.colorTipo || "verde");
+  return html`
+    <${Bloque}>
+      <input placeholder="VIN" value=${vin} onChange=${(e) => setVin(e.target.value)} style=${inputStyle} />
+      <input placeholder="OT (orden de trabajo)" value=${ot} onChange=${(e) => setOt(e.target.value)} style=${inputStyle} />
+      <textarea placeholder="Motivo de ingreso" rows="2" value=${motivo} onChange=${(e) => setMotivo(e.target.value)} style=${{ ...inputStyle, resize: "vertical" }} />
+      <div style=${{ fontSize: 12, color: GRAY, fontWeight: 600, marginTop: 2 }}>Clasificación de la unidad (se mantiene visible en todo el recorrido)</div>
+      <div style=${{ display: "flex", flexDirection: "column", gap: 6 }}>
+        ${COLOR_TIPO_OPCIONES.map((op) => html`
+          <label key=${op.id} style=${{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+            <input type="radio" name=${`colorTipo-${unidad.id}`} checked=${colorTipo === op.id} onChange=${() => setColorTipo(op.id)} />
+            <span style=${{ width: 12, height: 12, borderRadius: "50%", background: op.color, display: "inline-block" }} />${op.label}
+          </label>
+        `)}
+      </div>
+      <button style=${btnPrimary} onClick=${() => onTransicion({ patch: { vin, ot, motivoIngreso: motivo, colorTipo }, destino: 3, comentario: `OT ${ot}. Motivo: ${motivo}` })}>Enviar a Pendiente Asignar</button>
+    <//>
+  `;
+}
+
+function EtapaAsignar({ unidad, onTransicion }) {
+  const [t1, setT1] = useState(unidad.tecnico1 || ""); const [t2, setT2] = useState(unidad.tecnico2 || ""); const [t3, setT3] = useState(unidad.tecnico3 || "");
+  const [w1, setW1] = useState(unidad.trabajo1 || ""); const [w2, setW2] = useState(unidad.trabajo2 || ""); const [w3, setW3] = useState(unidad.trabajo3 || "");
+  function confirmar() {
+    const resumen = [t1 && `${t1}: ${w1 || "s/desc"}`, t2 && `${t2}: ${w2 || "s/desc"}`, t3 && `${t3}: ${w3 || "s/desc"}`].filter(Boolean).join(" | ");
+    onTransicion({ patch: { tecnico1: t1, tecnico2: t2, tecnico3: t3, trabajo1: w1, trabajo2: w2, trabajo3: w3 }, destino: 4, comentario: resumen || "Sin técnico asignado aún" });
+  }
+  return html`
+    <${Bloque}>
+      ${[[t1, setT1, w1, setW1, "Técnico 1", "Trabajo 1"], [t2, setT2, w2, setW2, "Técnico 2 (opcional)", "Trabajo 2"], [t3, setT3, w3, setW3, "Técnico 3 (opcional)", "Trabajo 3"]].map(([tv, tset, wv, wset, tl, wl], i) => html`
+        <div key=${i} style=${{ display: "flex", gap: 8 }}>
+          <input placeholder=${tl} value=${tv} onChange=${(e) => tset(e.target.value)} style=${inputStyle} />
+          <input placeholder=${wl} value=${wv} onChange=${(e) => wset(e.target.value)} style=${inputStyle} />
+        </div>
+      `)}
+      <button style=${btnPrimary} onClick=${confirmar}>Enviar a Diagnóstico</button>
+    <//>
+  `;
+}
+
+function EtapaDiagnostico({ unidad, onTransicion }) {
+  const [diag, setDiag] = useState(unidad.diagnostico || "");
+  const [tot, setTot] = useState(unidad.tot === true);
+  return html`
+    <${Bloque}>
+      <textarea placeholder="Diagnóstico" rows="3" value=${diag} onChange=${(e) => setDiag(e.target.value)} style=${{ ...inputStyle, resize: "vertical" }} />
+      <label style=${{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+        <input type="checkbox" checked=${tot} onChange=${(e) => setTot(e.target.checked)} />
+        <span style=${{ width: 12, height: 12, borderRadius: "50%", background: CELESTE, display: "inline-block" }} />Marcar TOT
+      </label>
+      <div style=${{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button style=${btnPrimary} onClick=${() => onTransicion({ patch: { diagnostico: diag, tot }, destino: 5, comentario: `Diagnóstico: ${diag}${tot ? " (TOT)" : ""}` })}>Enviar a Surtimiento de refacción</button>
+        <button style=${btnSecondary} onClick=${() => onTransicion({ patch: { diagnostico: diag, tot }, destino: 6, insertarOmitida: 5, comentario: `Diagnóstico: ${diag} (surtimiento omitido)${tot ? " (TOT)" : ""}` })}>Saltar surtimiento → ir a Reparación</button>
+      </div>
+    <//>
+  `;
+}
+
+function EtapaSurtimiento({ unidad, onTransicion }) {
+  const [completo, setCompleto] = useState(unidad.surtidoCompleto === true);
+  const [pendiente, setPendiente] = useState(unidad.pendienteSurtido || "");
+  return html`
+    <${Bloque}>
+      <label style=${{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}><input type="checkbox" checked=${completo} onChange=${(e) => setCompleto(e.target.checked)} /> Surtido completo</label>
+      ${!completo && html`<textarea placeholder="Detalle de lo pendiente por surtir" rows="2" value=${pendiente} onChange=${(e) => setPendiente(e.target.value)} style=${{ ...inputStyle, resize: "vertical" }} />`}
+      <button style=${btnPrimary} onClick=${() => onTransicion({ patch: { surtidoCompleto: completo, pendienteSurtido: completo ? "" : pendiente }, destino: 6, comentario: completo ? "Surtido completo" : `Surtido incompleto: ${pendiente}` })}>Enviar a Reparación</button>
+    <//>
+  `;
+}
+
+function EtapaReparacion({ unidad, onTransicion }) {
+  const [rep, setRep] = useState(unidad.reparacion || "");
+  const [regresando, setRegresando] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [tot, setTot] = useState(unidad.tot === true);
+  return html`
+    <${Bloque}>
+      <textarea placeholder="Reparación realizada" rows="3" value=${rep} onChange=${(e) => setRep(e.target.value)} style=${{ ...inputStyle, resize: "vertical" }} />
+      <label style=${{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+        <input type="checkbox" checked=${tot} onChange=${(e) => setTot(e.target.checked)} />
+        <span style=${{ width: 12, height: 12, borderRadius: "50%", background: CELESTE, display: "inline-block" }} />Marcar TOT
+      </label>
+      ${!regresando ? html`
+        <div style=${{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button style=${btnPrimary} onClick=${() => onTransicion({ patch: { reparacion: rep, tot }, destino: 7, comentario: `Reparación: ${rep}${tot ? " (TOT)" : ""}` })}>Enviar a Validación Taller</button>
+          <button style=${btnWarn} onClick=${() => setRegresando(true)}>Regresar a Surtimiento</button>
+        </div>
+      ` : html`
+        <textarea placeholder="Motivo del regreso a surtimiento" rows="2" value=${motivo} onChange=${(e) => setMotivo(e.target.value)} style=${{ ...inputStyle, resize: "vertical" }} />
+        <div style=${{ display: "flex", gap: 8 }}>
+          <button style=${btnWarn} onClick=${() => onTransicion({ patch: { reparacion: rep, tot }, destino: 5, comentario: `Motivo regreso a surtimiento: ${motivo}` })}>Confirmar regreso</button>
+          <button style=${btnSecondary} onClick=${() => setRegresando(false)}>Cancelar</button>
+        </div>
+      `}
+    <//>
+  `;
+}
+
+function EtapaValidacionTaller({ unidad, onTransicion }) {
+  const [auditado, setAuditado] = useState(unidad.auditoriaTaller === true);
+  const [regresando, setRegresando] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  return html`
+    <${Bloque}>
+      <label style=${{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}><input type="checkbox" checked=${auditado} onChange=${(e) => setAuditado(e.target.checked)} /> Auditoría realizada</label>
+      ${!regresando ? html`
+        <div style=${{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button style=${{ ...btnPrimary, opacity: auditado ? 1 : 0.5, cursor: auditado ? "pointer" : "not-allowed" }} disabled=${!auditado} onClick=${() => onTransicion({ patch: { auditoriaTaller: true }, destino: 8, comentario: "Auditoría de taller conforme" })}>Enviar a Validación Servicio</button>
+          <button style=${btnWarn} onClick=${() => setRegresando(true)}>Regresar a Reparación</button>
+        </div>
+      ` : html`
+        <textarea placeholder="Motivo del regreso a reparación" rows="2" value=${motivo} onChange=${(e) => setMotivo(e.target.value)} style=${{ ...inputStyle, resize: "vertical" }} />
+        <div style=${{ display: "flex", gap: 8 }}>
+          <button style=${btnWarn} onClick=${() => onTransicion({ patch: { auditoriaTaller: false }, destino: 6, comentario: `Motivo regreso a reparación: ${motivo}` })}>Confirmar regreso</button>
+          <button style=${btnSecondary} onClick=${() => setRegresando(false)}>Cancelar</button>
+        </div>
+      `}
+    <//>
+  `;
+}
+
+function EtapaValidacionServicio({ unidad, onArchivar, onTransicion }) {
+  const [auditado, setAuditado] = useState(unidad.auditoriaServicio === true);
+  const [regresando, setRegresando] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  return html`
+    <${Bloque}>
+      <label style=${{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}><input type="checkbox" checked=${auditado} onChange=${(e) => setAuditado(e.target.checked)} /> Auditoría de Servicio</label>
+      ${!regresando ? html`
+        <div style=${{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button style=${{ ...btnPrimary, background: GREEN, opacity: auditado ? 1 : 0.5, cursor: auditado ? "pointer" : "not-allowed" }} disabled=${!auditado} onClick=${() => onArchivar({ patch: { auditoriaServicio: true }, comentario: "Disponibilidad confirmada por Servicio" })}>Confirmar disponibilidad</button>
+          <button style=${btnWarn} onClick=${() => setRegresando(true)}>Regresar a Validación Taller</button>
+        </div>
+      ` : html`
+        <textarea placeholder="Motivo del regreso a validación taller" rows="2" value=${motivo} onChange=${(e) => setMotivo(e.target.value)} style=${{ ...inputStyle, resize: "vertical" }} />
+        <div style=${{ display: "flex", gap: 8 }}>
+          <button style=${btnWarn} onClick=${() => onTransicion({ patch: { auditoriaServicio: false }, destino: 7, comentario: `Motivo regreso a validación taller: ${motivo}` })}>Confirmar regreso</button>
+          <button style=${btnSecondary} onClick=${() => setRegresando(false)}>Cancelar</button>
+        </div>
+      `}
+    <//>
+  `;
+}
+
+function FormularioIngreso({ onCancelar, onGuardar }) {
+  const [vin, setVin] = useState(""); const [placa, setPlaca] = useState(""); const [cliente, setCliente] = useState("");
+  function submit() { if (!vin.trim() || !cliente.trim()) return; onGuardar({ vin: vin.trim(), placa: placa.trim(), cliente: cliente.trim() }); }
+  return html`
+    <div style=${{ position: "fixed", inset: 0, background: "rgba(0,27,71,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 }}>
+      <div style=${{ background: WHITE, borderRadius: 12, padding: 22, width: "100%", maxWidth: 380 }}>
+        <div style=${{ color: BLUE, fontWeight: 700, fontSize: 17, marginBottom: 4 }}>Ingreso Vigilante</div>
+        <div style=${{ color: GRAY, fontSize: 12.5, marginBottom: 14 }}>Registro inicial de la unidad al llegar a planta</div>
+        <div style=${{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <label style=${{ fontSize: 12.5, color: GRAY, fontWeight: 600 }}>VIN *<input value=${vin} onChange=${(e) => setVin(e.target.value)} style=${{ ...inputStyle, marginTop: 4 }} /></label>
+          <label style=${{ fontSize: 12.5, color: GRAY, fontWeight: 600 }}>Placa<input value=${placa} onChange=${(e) => setPlaca(e.target.value)} style=${{ ...inputStyle, marginTop: 4 }} /></label>
+          <label style=${{ fontSize: 12.5, color: GRAY, fontWeight: 600 }}>Cliente *<input value=${cliente} onChange=${(e) => setCliente(e.target.value)} style=${{ ...inputStyle, marginTop: 4 }} /></label>
+        </div>
+        <div style=${{ display: "flex", gap: 8, marginTop: 18 }}>
+          <button onClick=${submit} style=${{ ...btnPrimary, flex: 1 }}>Guardar</button>
+          <button onClick=${onCancelar} style=${btnSecondary}>Cancelar</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function Login({ onEntrar }) {
+  const [role, setRole] = useState(ROLES[0]);
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState(null);
+  const [cargando, setCargando] = useState(false);
+
+  async function entrar() {
+    setCargando(true); setError(null);
+    try {
+      const data = await api("/api/login", { method: "POST", body: JSON.stringify({ role, pin }) });
+      localStorage.setItem("taller_token", data.token);
+      localStorage.setItem("taller_role", data.role);
+      onEntrar(data.role);
+    } catch (e) { setError(e.message); }
+    finally { setCargando(false); }
+  }
+
+  return html`
+    <div style=${{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style=${{ maxWidth: 360, width: "100%" }}>
+        <div style=${{ color: BLUE, fontWeight: 700, fontSize: 18, marginBottom: 4, textAlign: "center" }}>IDEALEASE · Seguimiento de Unidades</div>
+        <div style=${{ color: GRAY, fontSize: 13, marginBottom: 18, textAlign: "center" }}>Ingresa tu rol y PIN para actualizar el estatus</div>
+        <div style=${{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <select value=${role} onChange=${(e) => setRole(e.target.value)} style=${inputStyle}>
+            ${ROLES.map((r) => html`<option key=${r} value=${r}>${r}</option>`)}
+          </select>
+          <input placeholder="PIN" type="password" inputMode="numeric" value=${pin} onChange=${(e) => setPin(e.target.value)} style=${inputStyle} onKeyDown=${(e) => e.key === "Enter" && entrar()} />
+          ${error && html`<div style=${{ color: RED, fontSize: 12.5 }}>${error}</div>`}
+          <button onClick=${entrar} disabled=${cargando} style=${{ ...btnPrimary, padding: "12px 16px", fontSize: 14.5 }}>${cargando ? "Entrando…" : "Entrar"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(html`<${App} />`);
+</script>
+</body>
+</html>
