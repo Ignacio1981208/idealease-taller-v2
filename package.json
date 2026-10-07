@@ -1,6 +1,6 @@
 {
-  "name": "ideal-taller-seguimiento",
-  "version": "1.0.0",
+  "name": "estatus-unidades-camino-casa",
+  "version": "4.0.0",
   "private": true,
   "dependencies": {
     "@netlify/database": "^1.0.0"
