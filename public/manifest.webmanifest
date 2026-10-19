@@ -1,7 +1,7 @@
 {
-  "name": "Estatus Unidades Camino Casa",
-  "short_name": "Camino Casa",
-  "description": "Seguimiento de unidades con ingreso a mantenimiento · Mantenimiento Idealease Oriente",
+  "name": "Estatus Camino Unidades",
+  "short_name": "Camino Unidades",
+  "description": "Seguimiento de unidades en taller (Camino Casa) y en agencia o sitio del cliente (Foránea / Sitio) · Mantenimiento Idealease Oriente",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

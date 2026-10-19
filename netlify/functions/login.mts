@@ -1,5 +1,5 @@
 import type { Context, Config } from "@netlify/functions";
-import { db, json, txt, ipDe, firmarSesion, asegurarConfig, pinIgual, TALLERES, ROLES, ROL_DIRECCION } from "./_lib.mts";
+import { db, json, txt, ipDe, firmarSesion, asegurarConfig, pinIgual, TALLERES, ROLES_TALLER, ROL_DIRECCION } from "./_lib.mts";
 
 const MAX_FALLOS = 5;
 const BLOQUEO_MIN = 10;
@@ -14,7 +14,7 @@ export default async (req: Request, context: Context) => {
   const taller = esDireccion ? "*" : txt((body as any).taller, 30);
 
   if (!role || !pin) return json({ error: "Rol y PIN requeridos" }, 400);
-  if (!esDireccion && (!TALLERES.includes(taller) || !ROLES.includes(role))) {
+  if (!esDireccion && (!TALLERES.includes(taller) || !ROLES_TALLER.includes(role))) {
     return json({ error: "Taller o rol inválido" }, 400);
   }
 
