@@ -2325,8 +2325,23 @@ function Acceso({ onEntrar }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState(null);
   const [cargando, setCargando] = useState(false);
+  const [descargando, setDescargando] = useState(false);
+  const [aviso, setAviso] = useState(null);
 
   function irA(m) { setModo(m); setError(null); setPin(""); }
+
+  // Reporte de Piso de todas las sucursales (Casa y Foránea / Sitio): se descarga desde el acceso, sin PIN
+  async function descargarTodas() {
+    setDescargando(true); setAviso(null);
+    try {
+      const r = await api("/api/reporte-publico", { sinSesion: true });
+      const lista = (c) => TALLERES.map((t) => ({ taller: t, data: (r[c] && r[c][t.id]) || vacio() }));
+      const casa = lista("casa"), foranea = lista("foranea");
+      if ([...casa, ...foranea].every((x) => x.data.unidades.length === 0 && x.data.historico.length === 0)) setAviso("Todavía no hay unidades en las sucursales.");
+      else await descargarReportePiso(casa, `reporte_piso_todas_las_sucursales_${new Date().toISOString().slice(0, 10)}.xlsx`, "reporte", foranea);
+    } catch (e) { setAviso(e.message || "No se pudo generar la descarga. Intenta de nuevo."); }
+    setDescargando(false);
+  }
 
   async function entrar(cuerpo) {
     if (!pin.trim()) { setError("Escribe tu PIN"); return; }
@@ -2427,6 +2442,14 @@ function Acceso({ onEntrar }) {
                 </span>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={BLUE} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
               </button>
+              <button type="button" onClick={descargarTodas} disabled={descargando} style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", minHeight: 64, padding: "10px 16px", boxSizing: "border-box", borderRadius: 12, border: "2px solid #7F8DA8", background: WHITE, color: BLUE, textAlign: "left", cursor: descargando ? "wait" : "pointer", opacity: descargando ? 0.7 : 1 }}>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={BLUE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>
+                <span style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+                  <span style={{ fontSize: 16, fontWeight: 700 }}>{descargando ? "Preparando el Excel…" : "Reporte de Piso · todas las sucursales"}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 500, color: "#4A5A75" }}>Excel combinado: Casa y Foránea / Sitio, sin entrar</span>
+                </span>
+              </button>
+              {aviso && <div style={{ color: RED, fontSize: 13 }}>{aviso}</div>}
             </div>
           </>
         ) : (
