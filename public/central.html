@@ -112,6 +112,17 @@ main{position:relative;z-index:1}
 </style>
 </head>
 <body>
+<div id="acceso" style="position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;background:linear-gradient(135deg,#0033A0,#001A5C);padding:16px">
+ <div style="background:#fff;border-radius:16px;padding:26px 24px;width:100%;max-width:360px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.35)">
+  <svg viewBox="0 0 512 512" style="width:84px;height:84px"><circle cx="256" cy="256" r="226" fill="#1F2B6B"/><circle cx="256" cy="256" r="188" fill="none" stroke="#fff" stroke-width="6"/><circle cx="256" cy="70" r="13" fill="#fff"/><g stroke="#8A97C0" stroke-width="5"><line x1="68" y1="256" x2="90" y2="256"/><line x1="422" y1="256" x2="444" y2="256"/><line x1="256" y1="422" x2="256" y2="444"/></g><text x="256" y="298" text-anchor="middle" font-family="Segoe UI,Arial" font-weight="800" font-size="124" fill="#fff">360</text></svg>
+  <h2 style="margin:10px 0 2px;color:#0033A0;font-size:18px">IDO 360 Central</h2>
+  <div style="font-size:12px;color:#5B6785;margin-bottom:16px">Acceso Monitoreo Dirección General</div>
+  <input id="acc-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:100%;font-size:20px;text-align:center;letter-spacing:.4em;padding:10px;border:1px solid #D5DCEB;border-radius:10px">
+  <button id="acc-btn" onclick="entrar()" style="width:100%;margin-top:10px;padding:11px;border:0;border-radius:10px;background:linear-gradient(90deg,#0033A0,#0057FF);color:#fff;font-weight:700;font-size:15px;cursor:pointer">Entrar</button>
+  <div id="acc-msg" style="min-height:18px;font-size:12px;color:#A61B1B;margin-top:10px"></div>
+  <button onclick="verDemo()" style="margin-top:6px;background:none;border:0;color:#0033A0;text-decoration:underline;cursor:pointer;font-size:12px">Ver demo sin conexión</button>
+ </div>
+</div>
 <div class="top">
   <div class="logo">360</div>
   <div><h1>IDO 360 Central</h1><small>Mantenimiento Idealease Oriente</small></div>
@@ -119,6 +130,7 @@ main{position:relative;z-index:1}
     <button data-v="inicio" class="on">Inicio</button>
     <button data-v="piso">Reporte de Piso</button>
     <button data-v="gasto">Gasto Refacciones</button>
+    <button onclick="salir()" title="Cerrar sesión">Salir</button>
   </nav>
 </div>
 
@@ -191,9 +203,6 @@ main{position:relative;z-index:1}
 
 <script>
 /* ================= CONFIGURACIÓN ================= */
-const FUENTES = {
-  piso:  '/.netlify/functions/reporte-piso'    // app Estatus Unidades (tiempo real)
-};
 const REFRESCO_PISO = 60000;
 const CAMINOS = {
   casa:{titulo:'Estatus Unidades Camino Casa',fases:[['ingreso','Ingreso Vigilante',1],['recepcion','Recepción Servicio',2],['asignar','Pendiente Asignar',2],['diagnostico','Diagnóstico / Revisión',4],['surtimiento','Surtimiento Refacción',24],['reparacion','Reparación',24],['valTaller','Validación Taller',0.5],['valServicio','Validación Servicio (Disponible)',0.5]]},
@@ -248,17 +257,12 @@ let piso=[],pisoDemo=false,camino='casa';
 const horas=t=>t&&t.inicio?((t.fin?new Date(t.fin):Date.now())-new Date(t.inicio))/36e5:null;
 const sem=(h,m)=>h==null?'':h<=m?'ok':h<=m*1.5?'warn':'bad';
 const fueraMeta=u=>{const f=CAMINOS[u.camino].fases.find(x=>x[0]===u.fase);return f&&horas(u.tiempos?.[u.fase])>f[2]};
-async function cargarPiso(){
-  try{const r=await fetch(FUENTES.piso,{cache:'no-store'});if(!r.ok)throw 0;const j=await r.json();piso=j.unidades||j;pisoDemo=false}
-  catch(e){if(!piso.length)piso=demoPiso();pisoDemo=true}
-  pintarPiso();pintarInicio();
-}
 document.querySelectorAll('.piso .tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.piso .tab').forEach(x=>x.classList.remove('on'));b.classList.add('on');camino=b.dataset.c;$('#p-fase').value='';pintarPiso()});
 $('#p-suc').onchange=()=>pintarPiso();$('#p-fase').onchange=()=>pintarPiso();
 function pintarPiso(){
   const cfg=CAMINOS[camino],fases=cfg.fases;
   $('#p-titulo').textContent=cfg.titulo;$('#p-dot').classList.toggle('demo',pisoDemo);
-  $('#p-estado').textContent=(pisoDemo?'DEMO · ':'En vivo · ')+'actualizado '+new Date().toLocaleTimeString('es-MX',{hour12:false});
+  $('#p-estado').textContent=(pisoDemo?'DEMO · ':pisoError?pisoError+' · último dato ':'En vivo · ')+'actualizado '+new Date().toLocaleTimeString('es-MX',{hour12:false});
   const fs=$('#p-fase'),fv=fs.value;fs.innerHTML='<option value="">Todas las fases</option>'+fases.map(f=>`<option value="${f[0]}">${f[1]}</option>`).join('');fs.value=fases.some(f=>f[0]===fv)?fv:'';
   const ss=$('#p-suc'),sv=ss.value;ss.innerHTML='<option value="">Todas las sucursales</option>'+[...new Set(piso.map(u=>u.sucursal))].sort().map(s=>`<option>${esc(s)}</option>`).join('');ss.value=sv;
   const rows=piso.filter(u=>u.camino===camino&&(!ss.value||u.sucursal===ss.value)&&(!fs.value||u.fase===fs.value)).sort((a,b)=>new Date(a.ingreso)-new Date(b.ingreso));
@@ -274,7 +278,7 @@ function pintarPiso(){
   if(!rows.length)h+=`<tr><td colspan="${nD+fases.length}" style="text-align:center;padding:30px;color:var(--gris)">Sin unidades con este filtro</td></tr>`;
   for(const u of rows){const fa=fases.find(f=>f[0]===u.fase),d=Math.floor((Date.now()-new Date(u.ingreso))/864e5);
     const ext=camino==='foranea'?`<td class="n">${esc(u.tipoLugar)}</td><td>${esc(u.agencia)}</td><td>${esc(u.ciudad)}</td><td>${esc(u.ot)}</td><td>${esc(u.folioCot)}</td><td class="r">${u.montoCot?mon(u.montoCot):''}</td><td class="n">${fh(u.fechaCompromiso)}</td>`:`<td>${esc(u.ot)}</td>`;
-    h+=`<tr><td class="suc">${esc(u.sucursal)}</td><td class="n">${fh(u.ingreso)}</td><td>${esc(u.vin)}</td><td>${esc(u.cliente)}</td><td class="st">${esc(fa?fa[1]:u.fase)}</td><td class="n">${fh(u.comentarioFecha)}</td><td>${esc(u.comentario)}</td><td class="n">${d}</td><td>${esc(u.responsable)}</td>${ext}`+
+    h+=`<tr><td class="suc">${esc(u.sucursal)}</td><td class="n">${fh(u.ingreso)}</td><td>${esc(u.vin)}</td><td>${esc(u.cliente)}</td><td class="st">${esc(fa?fa[1]:u.fase)}${u.salto?' <span class="demo-tag">⏳ Pendiente aceptar</span>':''}</td><td class="n">${fh(u.comentarioFecha)}</td><td>${esc(u.comentario)}</td><td class="n">${d}</td><td>${esc(u.responsable)}</td>${ext}`+
       fases.map(f=>{const t=u.tiempos?.[f[0]],hh=horas(t),act=f[0]===u.fase&&t&&!t.fin;return `<td class="h ${sem(hh,f[2])} ${act?'act':''}">${hh==null?'':hh.toFixed(1)+' h'}</td>`}).join('')+'</tr>'}
   $('#p-tabla').innerHTML=h+'</tbody>';
 }
@@ -486,6 +490,76 @@ function detalle(u){
 }
 function cerrar(){ $('#modal').classList.remove('on'); }
 $('#modal').onclick = e => { if (e.target.id==='modal') cerrar(); };
+
+/* ================= CONEXIÓN APP ESTATUS (idealease-taller-v2) ================= */
+const API = { login: '/api/login', snap: '/api/snapshot' };
+const TALLER_NOM = { veracruz:'Veracruz', tultitlan:'Tultitlán', altamira:'Altamira', cordoba:'Córdoba' };
+const ROL_CASA = ['Vigilante','Asesor de Servicio','Supervisor Mantenimiento','Técnico','Almacenista','Técnico','Supervisor Mantenimiento','Asesor de Servicio'];
+let TOKEN = null, modoDemo = false, pisoError = '';
+try { TOKEN = sessionStorage.getItem('ido360_tok'); } catch(e) {}
+const guardarTok = t => { TOKEN = t; try { t ? sessionStorage.setItem('ido360_tok', t) : sessionStorage.removeItem('ido360_tok'); } catch(e) {} };
+
+function mapUnit(u, camino){
+  const fs = CAMINOS[camino].fases, now = Date.now(), tiempos = {};
+  const acc = {}; let abierta = null;
+  for (const h of (u.historial || [])) {
+    if (!h || !h.etapa || h.comentario === 'Etapa omitida') continue;
+    const k = fs[h.etapa - 1] && fs[h.etapa - 1][0]; if (!k) continue;
+    const ini = new Date(h.inicio).getTime();
+    if (h.fin == null) { abierta = { k, ini }; acc[k] = acc[k] || 0; }
+    else acc[k] = (acc[k] || 0) + Math.max(0, new Date(h.fin).getTime() - ini);
+  }
+  for (const k in acc) {
+    if (abierta && abierta.k === k) tiempos[k] = { inicio: new Date(abierta.ini - acc[k]).toISOString(), fin: null };
+    else tiempos[k] = { inicio: new Date(0).toISOString(), fin: new Date(acc[k]).toISOString() };
+  }
+  const conCom = [...(u.historial || [])].reverse().find(h => h && h.comentario && h.comentario !== 'Etapa omitida');
+  const fase = fs[(u.etapaActual || 1) - 1] ? fs[u.etapaActual - 1][0] : fs[0][0];
+  return {
+    camino, sucursal: TALLER_NOM[u.taller] || u.taller, ingreso: u.fechaIngreso, vin: u.vin, cliente: u.cliente, ot: u.ot,
+    fase, tiempos, salto: !!u.saltoPendiente,
+    comentario: u.notaActual || (conCom ? conCom.comentario : ''),
+    comentarioFecha: conCom ? (conCom.borradorEn || conCom.fin || conCom.inicio) : '',
+    responsable: camino === 'foranea' ? 'Supervisor Foráneo' : (ROL_CASA[(u.etapaActual || 1) - 1] || ''),
+    tipoLugar: u.lugarTipo === 'sitio' ? 'Sitio cliente' : (u.lugarTipo ? 'Agencia' : ''),
+    agencia: u.lugarNombre, ciudad: u.ciudad, folioCot: u.cotFolio,
+    montoCot: parseFloat(String(u.cotMonto || '').replace(/[^0-9.]/g, '')) || 0,
+    fechaCompromiso: u.fechaCompromiso
+  };
+}
+
+async function cargarPiso(){
+  if (modoDemo) { if (!piso.length) piso = demoPiso(); pisoDemo = true; pintarPiso(); pintarInicio(); return; }
+  if (!TOKEN) { mostrarAcceso(); return; }
+  try {
+    const pedir = c => fetch(`${API.snap}?taller=all&camino=${c}&dias=0`, { headers: { authorization: 'Bearer ' + TOKEN }, cache: 'no-store' });
+    const [rc, rf] = await Promise.all([pedir('casa'), pedir('foranea')]);
+    if (rc.status === 401 || rf.status === 401) { guardarTok(null); mostrarAcceso('Tu sesión venció. Vuelve a escribir el PIN.'); return; }
+    if (!rc.ok || !rf.ok) throw new Error('HTTP ' + rc.status + '/' + rf.status);
+    const jc = await rc.json(), jf = await rf.json(), lista = [];
+    for (const [c, j] of [['casa', jc], ['foranea', jf]])
+      for (const t in (j.talleres || {})) for (const u of (j.talleres[t].unidades || [])) lista.push(mapUnit(u, c));
+    piso = lista; pisoDemo = false; pisoError = '';
+  } catch (e) { pisoError = 'Sin conexión con la app de estatus'; if (!piso.length) { piso = demoPiso(); pisoDemo = true; } }
+  pintarPiso(); pintarInicio();
+}
+
+function mostrarAcceso(msg){ $('#acceso').style.display = 'flex'; $('#acc-msg').textContent = msg || ''; setTimeout(() => $('#acc-pin').focus(), 50); }
+async function entrar(){
+  const pin = $('#acc-pin').value.trim(); if (!pin) return;
+  $('#acc-btn').disabled = true; $('#acc-msg').textContent = 'Verificando…';
+  try {
+    const r = await fetch(API.login, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role: 'Dirección General', pin }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'No se pudo entrar');
+    guardarTok(j.token); modoDemo = false; $('#acceso').style.display = 'none'; $('#acc-pin').value = ''; cargarPiso();
+  } catch (e) {
+    $('#acc-msg').textContent = e.message === 'Failed to fetch' || /JSON|fetch/i.test(e.message) ? 'No hay conexión con la app de estatus (¿abriste el archivo fuera de Netlify?). Usa "Ver demo".' : e.message;
+  } finally { $('#acc-btn').disabled = false; }
+}
+function verDemo(){ modoDemo = true; $('#acceso').style.display = 'none'; cargarPiso(); }
+function salir(){ guardarTok(null); modoDemo = false; piso = []; mostrarAcceso(); }
+$('#acc-pin').addEventListener('keydown', e => { if (e.key === 'Enter') entrar(); });
 
 /* ================= INICIO ================= */
 function pintarInicio(){
