@@ -112,15 +112,33 @@ main{position:relative;z-index:1}
 </style>
 </head>
 <body>
-<div id="acceso" style="position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;background:linear-gradient(135deg,#0033A0,#001A5C);padding:16px">
- <div style="background:#fff;border-radius:16px;padding:26px 24px;width:100%;max-width:360px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.35)">
-  <svg viewBox="0 0 512 512" style="width:84px;height:84px"><circle cx="256" cy="256" r="226" fill="#1F2B6B"/><circle cx="256" cy="256" r="188" fill="none" stroke="#fff" stroke-width="6"/><circle cx="256" cy="70" r="13" fill="#fff"/><g stroke="#8A97C0" stroke-width="5"><line x1="68" y1="256" x2="90" y2="256"/><line x1="422" y1="256" x2="444" y2="256"/><line x1="256" y1="422" x2="256" y2="444"/></g><text x="256" y="298" text-anchor="middle" font-family="Segoe UI,Arial" font-weight="800" font-size="124" fill="#fff">360</text></svg>
-  <h2 style="margin:10px 0 2px;color:#0033A0;font-size:18px">IDO 360 Central</h2>
-  <div style="font-size:12px;color:#5B6785;margin-bottom:16px">Acceso Monitoreo Dirección General</div>
-  <input id="acc-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:100%;font-size:20px;text-align:center;letter-spacing:.4em;padding:10px;border:1px solid #D5DCEB;border-radius:10px">
-  <button id="acc-btn" onclick="entrar()" style="width:100%;margin-top:10px;padding:11px;border:0;border-radius:10px;background:linear-gradient(90deg,#0033A0,#0057FF);color:#fff;font-weight:700;font-size:15px;cursor:pointer">Entrar</button>
-  <div id="acc-msg" style="min-height:18px;font-size:12px;color:#A61B1B;margin-top:10px"></div>
-  <button onclick="verDemo()" style="margin-top:6px;background:none;border:0;color:#0033A0;text-decoration:underline;cursor:pointer;font-size:12px">Ver demo sin conexión</button>
+<style>
+#acceso{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:16px;overflow:hidden;
+ background:#050B1F;background-image:linear-gradient(rgba(0,180,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(0,180,255,.07) 1px,transparent 1px);background-size:28px 28px}
+#acceso .wmA{position:absolute;width:min(90vw,640px);color:#00D1FF;opacity:.22;filter:drop-shadow(0 0 14px #00D1FF);pointer-events:none}
+#acceso .wmA .rot{transform-origin:256px 256px;animation:giroA 18s linear infinite}
+@keyframes giroA{to{transform:rotate(360deg)}}
+#acceso .cardA{position:relative;z-index:2;width:100%;max-width:360px;text-align:center;padding:26px 24px;border-radius:16px;
+ background:rgba(5,20,60,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(0,209,255,.5);box-shadow:0 0 24px rgba(0,209,255,.25)}
+#acceso h2{margin:10px 0 2px;color:#fff;font-size:18px;text-shadow:0 0 10px rgba(0,209,255,.7)}
+#acceso .sA{font-size:12px;color:#9CC9E6;margin-bottom:16px}
+#acc-pin{width:100%;font-size:20px;text-align:center;letter-spacing:.4em;padding:10px;border-radius:10px;background:rgba(0,40,110,.5);border:1px solid rgba(0,209,255,.5);color:#fff;outline:none}
+#acc-pin:focus{box-shadow:0 0 0 3px rgba(0,209,255,.35)}
+#acc-btn{width:100%;margin-top:10px;padding:11px;border:0;border-radius:10px;background:linear-gradient(90deg,#00B8E6,#0057FF);box-shadow:0 0 14px rgba(0,209,255,.5);color:#fff;font-weight:700;font-size:15px;cursor:pointer}
+#acc-msg{min-height:18px;font-size:12px;color:#FF7A90;margin-top:10px}
+#acceso .demoA{margin-top:6px;background:none;border:0;color:#00E5FF;text-decoration:underline;cursor:pointer;font-size:12px}
+@media (prefers-reduced-motion:reduce){#acceso .wmA .rot{animation:none}}
+</style>
+<div id="acceso">
+ <svg class="wmA" viewBox="0 0 512 512" fill="none" stroke="currentColor"><circle cx="256" cy="256" r="226" stroke-width="10"/><g class="rot"><circle cx="256" cy="256" r="188" stroke-width="4"/><circle cx="256" cy="70" r="13" fill="currentColor" stroke="none"/></g><g stroke-width="6"><line x1="68" y1="256" x2="90" y2="256"/><line x1="422" y1="256" x2="444" y2="256"/><line x1="256" y1="422" x2="256" y2="444"/></g><text x="256" y="298" text-anchor="middle" font-family="Segoe UI,Arial" font-weight="800" font-size="124" fill="currentColor" stroke="none">360</text></svg>
+ <div class="cardA">
+  <svg viewBox="0 0 512 512" style="width:76px;height:76px;filter:drop-shadow(0 0 8px #00D1FF)"><circle cx="256" cy="256" r="226" fill="#1F2B6B"/><circle cx="256" cy="256" r="188" fill="none" stroke="#fff" stroke-width="6"/><circle cx="256" cy="70" r="13" fill="#fff"/><g stroke="#8A97C0" stroke-width="5"><line x1="68" y1="256" x2="90" y2="256"/><line x1="422" y1="256" x2="444" y2="256"/><line x1="256" y1="422" x2="256" y2="444"/></g><text x="256" y="298" text-anchor="middle" font-family="Segoe UI,Arial" font-weight="800" font-size="124" fill="#fff">360</text></svg>
+  <h2>IDO 360 Central</h2>
+  <div class="sA">Acceso Monitoreo</div>
+  <input id="acc-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">
+  <button id="acc-btn" onclick="entrar()">Entrar</button>
+  <div id="acc-msg"></div>
+  <button class="demoA" onclick="verDemo()">Ver demo sin conexión</button>
  </div>
 </div>
 <div class="top">
