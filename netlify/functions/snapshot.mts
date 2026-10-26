@@ -1,5 +1,5 @@
 import type { Context, Config } from "@netlify/functions";
-import { db, json, autenticar, rowToUnit, TALLERES, ROL_DIRECCION, CAMINOS } from "./_lib.mts";
+import { db, json, autenticar, rowToUnit, TALLERES, ROL_DIRECCION, ROL_ESPECIALISTA, CAMINOS } from "./_lib.mts";
 
 // GET /api/snapshot?taller=veracruz|all&camino=casa|foranea&dias=35
 // Devuelve las unidades en proceso y (si dias > 0) las entregadas en los últimos N días.
@@ -8,6 +8,7 @@ export default async (req: Request, _context: Context) => {
 
   const sesion = await autenticar(req);
   if (!sesion) return json({ error: "Sesión inválida o vencida" }, 401);
+  if (sesion.role === ROL_ESPECIALISTA) return json({ error: "Tu rol solo tiene acceso a Disponibilidad" }, 403);
 
   const url = new URL(req.url);
   const pedido = url.searchParams.get("taller") || "all";

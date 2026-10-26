@@ -46,3 +46,45 @@ npx esbuild src/app.jsx --bundle --minify --format=esm --splitting --target=es20
   --outdir=public --entry-names=app --chunk-names=assets/[name]-[hash] \
   --define:process.env.NODE_ENV='"production"'
 ```
+
+## Disponibilidad de flota (IDO 360) · agregado oct 2026
+Reporte diario de disponibilidad por sucursal (R, RT, D, T, ND, S, MI, SER) que se captura en
+`/disponibilidad.html` y se ve en vivo en `central.html` → menú **Disponibilidad**.
+
+- `netlify/database/migrations/004_disponibilidad/` → tablas `disp_unidades` (catálogo), `disp_mes`
+  (estatus por día, 31 caracteres por unidad y mes), `disp_bitacora` (quién guardó qué) y la función
+  `disp_mezcla` (guarda solo los días que cambiaron, sin pisar lo que capturó otra persona).
+  No modifica ninguna tabla existente.
+- `netlify/functions/disponibilidad.mts` → `GET/POST /api/disponibilidad`.
+  - Captura: **solo el Especialista de Servicio**, con **PIN propio**, y solo en su sucursal
+    (lo valida el servidor). Ningún otro rol puede guardar.
+  - Consulta: Dirección General ve las 4 sucursales; el Especialista solo la suya.
+  - El PIN de Especialista **no** abre Camino Casa ni el Reporte de Piso (`/api/snapshot` lo rechaza).
+- IDO 360 Central (`central.html`): en el acceso se elige **Dirección General** o **Especialista de
+  Servicio + sucursal**. El Especialista solo ve el menú Disponibilidad, fijo en su sucursal, con el botón
+  **Capturar disponibilidad** (abre `/disponibilidad.html` con la misma sesión, sin volver a pedir PIN).
+
+### Dar de alta los PIN de Especialista de Servicio (una sola vez)
+En Netlify → Database, ejecutar (cambia 0000 por el PIN de cada sucursal):
+```sql
+INSERT INTO taller_pins (taller, role, pin) VALUES
+  ('veracruz',  'Especialista de Servicio', '0000'),
+  ('tultitlan', 'Especialista de Servicio', '0000'),
+  ('altamira',  'Especialista de Servicio', '0000'),
+  ('cordoba',   'Especialista de Servicio', '0000')
+ON CONFLICT (taller, role) DO UPDATE SET pin = EXCLUDED.pin;
+```
+Cambiar uno después: `UPDATE taller_pins SET pin = '1234' WHERE taller = 'veracruz' AND role = 'Especialista de Servicio';`
+- Carga inicial: el Especialista de cada sucursal entra a `/disponibilidad.html`, botón **Cargar Excel** (formato actual
+  "Disponibilidad <Mes>"). Al importar se reemplaza el catálogo de esa sucursal; las unidades que ya no
+  vienen quedan inactivas en la base (no se borran).
+- La Central relee la disponibilidad cada minuto, junto con el Reporte de Piso, y cruza por VIN las
+  unidades en taller contra su estatus de disponibilidad.
+
+Consultas útiles en Netlify → Database:
+```sql
+-- Últimos guardados
+SELECT fecha, taller, mes, accion, por FROM disp_bitacora ORDER BY fecha DESC LIMIT 50;
+-- Unidades por sucursal
+SELECT taller, COUNT(*) FROM disp_unidades WHERE activa GROUP BY taller;
+```

@@ -28,7 +28,9 @@ export const ETAPAS_FORANEA = [
   { id: 5, nombre: "Reparación", rol: ROL_FORANEO },
   { id: 6, nombre: "Unidad Disponible", rol: ROL_FORANEO },
 ];
-export const ROLES_TALLER = [...ROLES, ROL_FORANEO]; // roles que inician sesión con PIN de taller
+// Disponibilidad de flota: único rol que captura, con PIN propio por sucursal
+export const ROL_ESPECIALISTA = "Especialista de Servicio";
+export const ROLES_TALLER = [...ROLES, ROL_FORANEO, ROL_ESPECIALISTA]; // roles que inician sesión con PIN de taller
 export const CAMINOS = ["casa", "foranea"];
 
 // ---------- utilidades ----------
